@@ -11,12 +11,12 @@
 
 Musings
 * **Use Docker Image** - This is currently tested on docker image dnwalkup/cuda:116-cudnn8-devel-u2004 -- built specifically for Runpod, but may work with other cloud providers.
-* **Docker Image Base** - Ubuntu 20.04, Nvidia CUDNN 8, CUDA 1.16
+* **Docker Image Base** - Ubuntu 20.04, Nvidia CUDNN 8, CUDA 11.6
 * **PIP Installs** - gDown, wget, ftfy, OmegaConf, tqdm, tensorboard, transfomers, triton, pillow, iPython, pycuda, ipywidgets, jupyterlab
 * **APT Installs** - zip, unzip, rename, python3, python3-apt, python3-diskutils, python3-pip
 
 ## Installation
-Use the Jupyter Notebook. The code is basic at the moment and doesn't support environments outside of the docker image (e.g. with xFormers).
+Use the Jupyter Notebook. The code is basic at the moment and doesn't support environments outside of the docker image. For example, xFormers was built for the 3090 and A5000 specifically for CUDA 11.6 and Python 3.8.
 
 Once you are in your cloud environment's Juypter Notebook, click "FILE > OPEN FROM URL..." Then paste in the link for the notebook:
 https://github.com/dnwalkup/StableTuner/raw/main/linux/runpod-cu116.ipynb
