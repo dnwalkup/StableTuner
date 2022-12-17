@@ -53,7 +53,7 @@ import torchvision
 from PIL.Image import Image as Img
 logger = get_logger(__name__)
 from PIL.Image import Resampling
-
+from diffusers.utils.import_utils import is_xformers_available
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
@@ -76,25 +76,25 @@ def parse_args():
         "--use_bucketing",
         default=False,
         action="store_true",
-        help="Will save and generate samples before training",
+        help="Use aspect ratio bucketing",
     )
     parser.add_argument(
         "--regenerate_latent_cache",
         default=False,
         action="store_true",
-        help="Will save and generate samples before training",
+        help="Regenerate latent cache. Necessary if you've made changes to batch size.",
     )
     parser.add_argument(
         "--save_latents_cache",
         default=False,
         action="store_true",
-        help="Will save and generate samples before training",
+        help="Needs description",
     )
     parser.add_argument(
-        "--save_on_training_start",
+        "--sample_on_training_start",
         default=False,
         action="store_true",
-        help="Will save and generate samples before training",
+        help="Samples (and saves?) an image on the start of training to help track progress",
     )
     parser.add_argument(
         "--add_class_images_to_dataset",
@@ -386,9 +386,9 @@ def parse_args():
         help="Log every N steps."
     )
     parser.add_argument(
-        "--save_interval", 
+        "--sample_step_interval", 
         type=int, 
-        default=10000, 
+        default=100000000000000, 
         help="Save weights every N steps."
     )
     parser.add_argument(
@@ -402,8 +402,17 @@ def parse_args():
             "and an Nvidia Ampere GPU."
         ),
     )
-    parser.add_argument("--not_cache_latents", action="store_true", help="Do not precompute and cache latents from VAE.")
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument(
+        "--not_cache_latents", 
+        action="store_true",
+         help="Do not precompute and cache latents from VAE."
+    )
+    parser.add_argument(
+        "--local_rank", 
+        type=int, 
+        default=-1, 
+        help="For distributed training: local_rank"
+    )
     parser.add_argument(
         "--concepts_list",
         type=str,
@@ -492,6 +501,7 @@ ASPECTS7 = [[896, 896],
 [1536, 512], [512, 1536], 
 [1600, 448], [448, 1600], 
 [1664, 448], [448, 1664]]
+
 ASPECTS8 = [[896, 896], 
 [960, 832], [832, 960], 
 [1024, 768], [768, 1024], 
@@ -501,7 +511,8 @@ ASPECTS8 = [[896, 896],
 [1472, 512], [512, 1472], 
 [1536, 512], [512, 1536], 
 [1600, 448], [448, 1600], 
-[1664, 448], [448, 1664]]     
+[1664, 448], [448, 1664]]
+
 ASPECTS9 = [[1024, 1024], 
 [1088, 960], [960, 1088], 
 [1152, 896], [896, 1152], 
@@ -511,6 +522,7 @@ ASPECTS9 = [[1024, 1024],
 [1600, 640], [640, 1600], 
 [1728, 576], [576, 1728], 
 [1792, 576], [576, 1792]]
+
 ASPECTS5 = [[768,768],     # 589824 1:1
     [832,704],[704,832],   # 585728 1.181:1
     [896,640],[640,896],   # 573440 1.4:1
@@ -580,7 +592,7 @@ def get_aspect_buckets(resolution):
         print("Rounded resolution to", rounded_resolution)
         all_image_sizes = __get_all_aspects()
         aspects = next(filter(lambda sizes: sizes[0][0]==rounded_resolution, all_image_sizes), None)
-        print(aspects)
+        #print(aspects)
         return aspects
     except Exception as e:
         print(f" *** Could not find selected resolution: {rounded_resolution}, check your resolution in config YAML")
@@ -818,7 +830,8 @@ class DataLoaderMultiAspect():
         
         self.aspects = get_aspect_buckets(resolution)
         print(f"* DLMA resolution {resolution}, buckets: {self.aspects}")
-
+        #process sub directories flag
+            
         print(" Preloading images...")
         if balance_datasets:
             print(" Balancing datasets...")
@@ -838,7 +851,15 @@ class DataLoaderMultiAspect():
                 else:
                         balance_cocnept_list.append(min_concept_num_images)
         for concept in concept_list:
+            if 'use_sub_dirs' in concept:
+                if concept['use_sub_dirs'] == True:
+                    use_sub_dirs = True
+                else:
+                    use_sub_dirs = False
+            else:
+                use_sub_dirs = False
             self.image_paths = []
+            #self.class_image_paths = []
             min_concept_num_images = -1
             if balance_datasets:
                 min_concept_num_images = balance_cocnept_list[concept_list.index(concept)]
@@ -846,12 +867,12 @@ class DataLoaderMultiAspect():
             data_root_class = concept['class_data_dir']
             concept_prompt = concept['instance_prompt']
             concept_class_prompt = concept['class_prompt']
-            self.__recurse_data_root(self=self, recurse_root=data_root)
+            self.__recurse_data_root(self=self, recurse_root=data_root,use_sub_dirs=use_sub_dirs)
             random.Random(seed).shuffle(self.image_paths)
             prepared_train_data.extend(self.__prescan_images(debug_level, self.image_paths, flip_p,use_image_names_as_captions,concept_prompt,use_text_files_as_captions=self.use_text_files_as_captions)[0:min_concept_num_images]) # ImageTrainItem[]
             if add_class_images_to_dataset:
                 self.image_paths = []
-                self.__recurse_data_root(self=self, recurse_root=data_root_class)
+                self.__recurse_data_root(self=self, recurse_root=data_root_class,use_sub_dirs=use_sub_dirs)
                 random.Random(seed).shuffle(self.image_paths)
                 use_image_names_as_captions = False
                 prepared_train_data.extend(self.__prescan_images(debug_level, self.image_paths, flip_p,use_image_names_as_captions,concept_class_prompt,use_text_files_as_captions=self.use_text_files_as_captions)) # ImageTrainItem[]
@@ -860,13 +881,13 @@ class DataLoaderMultiAspect():
         if self.with_prior_loss and add_class_images_to_dataset == False:
             self.class_image_caption_pairs = []
             for concept in concept_list:
-                self.image_paths = []
+                self.class_images_path = []
                 data_root_class = concept['class_data_dir']
                 concept_class_prompt = concept['class_prompt']
-                self.__recurse_data_root(self=self, recurse_root=data_root_class)
+                self.__recurse_data_root(self=self, recurse_root=data_root_class,use_sub_dirs=use_sub_dirs,class_images=True)
                 random.Random(seed).shuffle(self.image_paths)
                 use_image_names_as_captions = False
-                self.class_image_caption_pairs.extend(self.__prescan_images(debug_level, self.image_paths, flip_p,use_image_names_as_captions,concept_class_prompt,use_text_files_as_captions=self.use_text_files_as_captions))
+                self.class_image_caption_pairs.extend(self.__prescan_images(debug_level, self.class_images_path, flip_p,use_image_names_as_captions,concept_class_prompt,use_text_files_as_captions=self.use_text_files_as_captions))
             self.class_image_caption_pairs = self.__bucketize_images(self.class_image_caption_pairs, batch_size=batch_size, debug_level=debug_level)
         if debug_level > 0: print(f" * DLMA Example: {self.image_caption_pairs[0]} images")
         #print the length of image_caption_pairs
@@ -883,6 +904,7 @@ class DataLoaderMultiAspect():
         decorated_image_train_items = []
         
         for pathname in image_paths:
+            identifier = concept 
             if use_image_names_as_captions:
                 caption_from_filename = os.path.splitext(os.path.basename(pathname))[0].split("_")[0]
                 identifier = caption_from_filename
@@ -900,8 +922,6 @@ class DataLoaderMultiAspect():
                         print(f" *** Error reading {txt_file_path} to get caption, falling back to filename")
                         identifier = caption_from_filename
                         pass
-            elif use_image_names_as_captions == False and use_text_files_as_captions == False:
-                identifier = concept 
             #print("identifier: ",identifier)
             image = Image.open(pathname)
             width, height = image.size
@@ -947,24 +967,27 @@ class DataLoaderMultiAspect():
         return image_caption_pairs
 
     @staticmethod
-    def __recurse_data_root(self, recurse_root):
+    def __recurse_data_root(self, recurse_root,use_sub_dirs=True,class_images=False):
         for f in os.listdir(recurse_root):
             current = os.path.join(recurse_root, f)
 
             if os.path.isfile(current):
                 ext = os.path.splitext(f)[1].lower()
                 if ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
-                    self.image_paths.append(current)
+                    if class_images == False:
+                        self.image_paths.append(current)
+                    else:
+                        self.class_images_path.append(current)
+        if use_sub_dirs:
+            sub_dirs = []
 
-        sub_dirs = []
+            for d in os.listdir(recurse_root):
+                current = os.path.join(recurse_root, d)
+                if os.path.isdir(current):
+                    sub_dirs.append(current)
 
-        for d in os.listdir(recurse_root):
-            current = os.path.join(recurse_root, d)
-            if os.path.isdir(current):
-                sub_dirs.append(current)
-
-        for dir in sub_dirs:
-            self.__recurse_data_root(self=self, recurse_root=dir)
+            for dir in sub_dirs:
+                self.__recurse_data_root(self=self, recurse_root=dir)
 
 class DreamBoothDataset(Dataset):
     """
@@ -990,22 +1013,27 @@ class DreamBoothDataset(Dataset):
         self.tokenizer = tokenizer
         self.with_prior_preservation = with_prior_preservation
         self.use_text_files_as_captions = use_text_files_as_captions
-
-        self.instance_images_path = []
+        self.image_paths = []
         self.class_images_path = []
 
         for concept in concepts_list:
+            if 'use_sub_dirs' in concept:
+                if concept['use_sub_dirs'] == True:
+                    use_sub_dirs = True
+                else:
+                    use_sub_dirs = False
+            else:
+                use_sub_dirs = False
+
             for i in range(repeats):
-                inst_img_path = [(x, concept["instance_prompt"]) for x in Path(concept["instance_data_dir"]).iterdir() if x.is_file() and x.suffix.lower() == ".jpg" or x.suffix.lower() == ".png" or x.suffix.lower() == ".jpeg"]
-                self.instance_images_path.extend(inst_img_path)
+                self.__recurse_data_root(self, concept,use_sub_dirs=use_sub_dirs)
 
             if with_prior_preservation:
                 for i in range(repeats):
-                    class_img_path = [(x, concept["class_prompt"]) for x in Path(concept["class_data_dir"]).iterdir() if x.is_file() and x.suffix.lower() == ".jpg" or x.suffix.lower() == ".png" or x.suffix.lower() == ".jpeg"]
-                    self.class_images_path.extend(class_img_path[:num_class_images])
-        random.shuffle(self.instance_images_path)
+                    self.__recurse_data_root(self, concept,use_sub_dirs=False,class_images=True)
+        random.shuffle(self.image_paths)
 
-        self.num_instance_images = len(self.instance_images_path)
+        self.num_instance_images = len(self.image_paths)
         self._length = self.num_instance_images
         self.num_class_images = len(self.class_images_path)
         self._length = max(self.num_class_images, self.num_instance_images)
@@ -1018,20 +1046,59 @@ class DreamBoothDataset(Dataset):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
+    @staticmethod
+    def __recurse_data_root(self, recurse_root,use_sub_dirs=True,class_images=False):
+        #if recurse root is a dict
+        if isinstance(recurse_root, dict):
+            concept_token = recurse_root['instance_prompt']
+            data = recurse_root['instance_data_dir']
+            
+            if class_images:
+                concept_token = recurse_root['class_prompt']
+                data = recurse_root['class_data_dir']
+        else:
+            concept_token = None
+        for f in os.listdir(data):
+            current = os.path.join(data, f)
 
+            if os.path.isfile(current):
+                ext = os.path.splitext(f)[1].lower()
+                if ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
+                    if class_images == False:
+                        self.image_paths.append((current,concept_token))
+                    else:
+                        self.class_images_path.append((current,concept_token))
+        if use_sub_dirs:
+            sub_dirs = []
+
+            for d in os.listdir(data):
+                current = os.path.join(data, d)
+                if os.path.isdir(current):
+                    sub_dirs.append(current)
+
+            for dir in sub_dirs:
+                if class_images != False:
+                    self.__recurse_data_root(self=self, recurse_root={'instance_data_dir' : dir, 'instance_prompt' : concept_token})
+                else:
+                    self.__recurse_data_root(self=self, recurse_root={'class_data_dir' : dir, 'class_prompt' : concept_token})
+        
     def __len__(self):
         return self._length
 
     def __getitem__(self, index):
         example = {}
-        instance_path, instance_prompt = self.instance_images_path[index % self.num_instance_images]
+        instance_path, instance_prompt = self.image_paths[index % self.num_instance_images]
         instance_image = Image.open(instance_path)
         if self.use_image_names_as_captions == True:
             instance_prompt = str(instance_path).split(os.sep)[-1].split('.')[0].split('_')[0]
         #else if there's a txt file with the same name as the image, read the caption from there
         if self.use_text_files_as_captions == True:
-            #if there's a txt file with the same name as the image, read the caption from there
-            txt_path = instance_path.with_suffix('.txt')
+            #if there's a file with the same name as the image, but with a .txt extension, read the caption from there
+            #get the last . in the file name
+            last_dot = str(instance_path).rfind('.')
+            #get the path up to the last dot
+            txt_path = str(instance_path)[:last_dot] + '.txt'
+
             #if txt_path exists, read the caption from there
             if os.path.exists(txt_path):
                 with open(txt_path, encoding='utf-8') as f:
@@ -1169,10 +1236,12 @@ def send_media_group(chat_id,telegram_token, images, caption=None, reply_to_mess
         media[0]['parse_mode'] = 'HTML'
         return requests.post(SEND_MEDIA_GROUP, data={'chat_id': chat_id, 'media': json.dumps(media),'disable_notification':True, 'reply_to_message_id': reply_to_message_id }, files=files)
 def main():
-    
+    #torch.cuda.set_per_process_memory_fraction(0.5)
     args = parse_args()
     if args.disable_cudnn_benchmark:
         torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.benchmark = True
     if args.send_telegram_updates:
         send_telegram_message(f"Booting up Dreambooth!\n", args.telegram_chat_id, args.telegram_token)
     logging_dir = Path(args.output_dir, "0", args.logging_dir)
@@ -1272,14 +1341,23 @@ def main():
     if args.tokenizer_name:
         tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name )
     elif args.pretrained_model_name_or_path:
-        print(os.getcwd())
+        #print(os.getcwd())
         tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer" )
 
     # Load models and create wrapper for stable diffusion
     text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder" )
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae" )
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet" )
-
+    
+    if is_xformers_available():
+        try:
+            unet.enable_xformers_memory_efficient_attention()
+            vae.enable_xformers_memory_efficient_attention()
+        except Exception as e:
+            logger.warning(
+                "Could not enable memory efficient attention. Make sure xformers is installed"
+                f" correctly and a GPU is available: {e}"
+            )
     vae.requires_grad_(False)
     #vae.enable_slicing()
     if not args.train_text_encoder:
@@ -1367,8 +1445,10 @@ def main():
     )
     def collate_fn(examples):
         #print(examples)
+        #print('test')
         input_ids = [example["instance_prompt_ids"] for example in examples]
         pixel_values = [example["instance_images"] for example in examples]
+        #print('test')
         # Concat class and instance examples for prior preservation.
         # We do this to avoid doing two forward passes.
         if args.with_prior_preservation:
@@ -1459,6 +1539,7 @@ def main():
                 with torch.no_grad():
                     batch["pixel_values"] = batch["pixel_values"].to(accelerator.device, non_blocking=True, dtype=weight_dtype)
                     batch["input_ids"] = batch["input_ids"].to(accelerator.device, non_blocking=True)
+                    
                     latents_cache.append(vae.encode(batch["pixel_values"]).latent_dist)
                     if args.train_text_encoder:
                         text_encoder_cache.append(batch["input_ids"])
@@ -1526,7 +1607,7 @@ def main():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
 
-    def save_weights(step,context='checkpoint'):
+    def save_and_sample_weights(step,context='checkpoint',save_model=True):
         #check how many folders are in the output dir
         #if there are more than 5, delete the oldest one
         #save the model
@@ -1558,14 +1639,18 @@ def main():
                     shutil.rmtree(oldest_folder_path)
         # Create the pipeline using using the trained modules and save it.
         if accelerator.is_main_process:
-            
+            if context =='step':
+                #what is the current epoch
+                epoch = step // num_update_steps_per_epoch
+            else:
+                epoch = step
             if args.train_text_encoder and args.stop_text_encoder_training == True:
                 text_enc_model = accelerator.unwrap_model(text_encoder,True)
-            elif args.train_text_encoder and args.stop_text_encoder_training > step:
+            elif args.train_text_encoder and args.stop_text_encoder_training > epoch:
                 text_enc_model = accelerator.unwrap_model(text_encoder,True)
             elif args.train_text_encoder == False:
                 text_enc_model = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder" )
-            elif args.train_text_encoder and args.stop_text_encoder_training <= step:
+            elif args.train_text_encoder and args.stop_text_encoder_training <= epoch:
                 text_enc_model = CLIPTextModel.from_pretrained(frozen_directory, subfolder="text_encoder" )
                 
             #scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
@@ -1581,12 +1666,23 @@ def main():
                 torch_dtype=torch.float16
             )
             pipeline.scheduler = scheduler
+            if is_xformers_available():
+                try:
+                    pipeline.enable_xformers_memory_efficient_attention()
+                except Exception as e:
+                    logger.warning(
+                        "Could not enable memory efficient attention. Make sure xformers is installed"
+                        f" correctly and a GPU is available: {e}"
+                    )
             save_dir = os.path.join(args.output_dir, f"{step}")
             if args.stop_text_encoder_training == True:
                 save_dir = frozen_directory
             if step != 0:
-                
-                pipeline.save_pretrained(save_dir)
+                if save_model:
+                    pipeline.save_pretrained(save_dir)
+                else:
+                    if not os.path.isdir(save_dir):
+                        os.mkdir(save_dir)
                 with open(os.path.join(save_dir, "args.json"), "w") as f:
                     json.dump(args.__dict__, f, indent=2)
                 if args.stop_text_encoder_training == True:
@@ -1640,7 +1736,10 @@ def main():
                 del pipeline
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            print(f"[*] Weights saved at {save_dir}")
+            if save_model == True:
+                print(f"[*] Weights saved to {save_dir}")
+            else:
+                print(f"[*] Samples saved to {save_dir}")
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
@@ -1663,8 +1762,8 @@ def main():
                 text_encoder.train()
             
             #save initial weights
-            if args.save_on_training_start==True and epoch==0:
-                save_weights(epoch,'epoch')
+            if args.sample_on_training_start==True and epoch==0:
+                save_and_sample_weights(epoch,'epoch',save_model=False)
             
             if args.train_text_encoder and args.stop_text_encoder_training == epoch:
                 args.stop_text_encoder_training = True
@@ -1682,7 +1781,7 @@ def main():
                         #delete the folder if it already exists
                         shutil.rmtree(frozen_directory)
                     os.mkdir(frozen_directory)
-                    save_weights(epoch,'epoch')
+                    save_and_sample_weights(epoch,'epoch')
                     args.stop_text_encoder_training = epoch
 
             for step, batch in enumerate(train_dataloader):
@@ -1750,7 +1849,6 @@ def main():
                         prior_loss = F.mse_loss(model_pred_prior.float(), target_prior.float(), reduction="mean")
                         
                     else:
-                        #loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
                         loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
@@ -1772,8 +1870,8 @@ def main():
                 
                 
 
-                #if global_step > 0 and not global_step % args.save_interval:
-                #    save_weights(global_step,'checkpoint')
+                if global_step > 0 and not global_step % args.sample_step_interval:
+                    save_and_sample_weights(global_step,'step',save_model=False)
 
                 progress_bar.update(1)
                 global_step += 1
@@ -1781,23 +1879,26 @@ def main():
                 if global_step >= args.max_train_steps:
                     break
             progress_bar_e.update(1)
-            if not epoch % args.save_every_n_epoch and epoch != 0:
+            if not epoch % args.save_every_n_epoch:
                     #print(epoch % args.save_every_n_epoch)
                     #print('test')
-                    save_weights(epoch,'epoch')
+                    if epoch != 0:
+                        save_and_sample_weights(epoch,'epoch')
+                    else:
+                        save_and_sample_weights(epoch,'epoch',False)
             
             accelerator.wait_for_everyone()
     except Exception:
         try:
             send_telegram_message("Something went wrong while training! :(", args.telegram_chat_id, args.telegram_token)
-            #save_weights(global_step,'checkpoint')
+            #save_and_sample_weights(global_step,'checkpoint')
             send_telegram_message(f"Saved checkpoint {global_step} on exit", args.telegram_chat_id, args.telegram_token)
         except Exception:
             pass
         raise
     except KeyboardInterrupt:
         send_telegram_message("Training stopped", args.telegram_chat_id, args.telegram_token)
-    save_weights(args.num_train_epochs,'epoch')
+    save_and_sample_weights(args.num_train_epochs,'epoch')
     try:
         send_telegram_message("Training finished!", args.telegram_chat_id, args.telegram_token)
     except:
