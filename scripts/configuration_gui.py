@@ -1242,18 +1242,22 @@ class App(ctk.CTk):
                 self.with_prior_loss_preservation_label.configure(state='normal')
                 self.prior_loss_preservation_weight_entry.configure(state='normal')
                 self.prior_loss_preservation_weight_label.configure(state='normal')
+                self.with_prior_loss_preservation_var.set(1)
         except:
             pass
         self.dreambooth_mode_selected = ctk.CTkLabel(self.general_frame_subframe_side_guide,fg_color='transparent', text="Dreambooth it is!\n I disabled irrelevant features for you.", font=ctk.CTkFont(size=14))
         self.dreambooth_mode_selected.pack(side="top", fill="x", expand=False, padx=10, pady=10)
         self.use_text_files_as_captions_checkbox.configure(state='disabled')
         self.use_text_files_as_captions_label.configure(state='disabled')
+        self.use_text_files_as_captions_var.set(0)
         #self.use_text_files_as_captions_checkbox.set(0)
         self.use_image_names_as_captions_label.configure(state='disabled')
         self.use_image_names_as_captions_checkbox.configure(state='disabled')
+        self.use_image_names_as_captions_var.set(0)
         #self.use_image_names_as_captions_checkbox.set(0)
         self.add_class_images_to_dataset_checkbox.configure(state='disabled')
         self.add_class_images_to_dataset_label.configure(state='disabled')
+        self.add_class_images_to_dataset_var.set(0)
         #self.add_class_images_to_dataset_checkbox.set(0)
         pass
     def fine_tune_mode(self):
@@ -1267,6 +1271,9 @@ class App(ctk.CTk):
                 self.use_image_names_as_captions_checkbox.configure(state='normal')
                 self.add_class_images_to_dataset_checkbox.configure(state='normal')
                 self.add_class_images_to_dataset_label.configure(state='normal')
+                self.use_text_files_as_captions_var.set(1)
+                self.use_image_names_as_captions_var.set(1)
+                self.add_class_images_to_dataset_var.set(0)
         except:
             pass
         try:
@@ -1281,6 +1288,8 @@ class App(ctk.CTk):
         #self.with_prior_loss_preservation_checkbox.set(0)
         self.prior_loss_preservation_weight_label.configure(state='disabled')
         self.prior_loss_preservation_weight_entry.configure(state='disabled')
+        self.with_prior_loss_preservation_var.set(0)
+
         #self.prior_loss_preservation_weight_entry.set(1.0)
         pass
     def lora_mode(self):
@@ -1984,6 +1993,7 @@ class App(ctk.CTk):
         
         import diffusers
         import torch
+        from diffusers.utils.import_utils import is_xformers_available
         self.play_height = sample_height
         self.play_width = sample_width
         #interactive = self.play_interactive_generation_button_bool.get()
@@ -1996,7 +2006,7 @@ class App(ctk.CTk):
             self.play_generate_image_button["text"] = "Loading Model, Please stand by..."
             #self.play_generate_image_button.configure(fg="red")
             self.play_generate_image_button.update()
-            self.pipe = diffusers.DiffusionPipeline.from_pretrained(model,torch_dtype=torch.float16)
+            self.pipe = diffusers.DiffusionPipeline.from_pretrained(model,torch_dtype=torch.float16,safety_checker=None)
             self.pipe.to('cuda')
             self.current_model = model
             if scheduler == 'DPMSolverMultistepScheduler':
@@ -2010,7 +2020,14 @@ class App(ctk.CTk):
             if scheduler == 'EulerDiscreteScheduler':
                 scheduler = diffusers.EulerDiscreteScheduler.from_config(self.pipe.scheduler.config)
             self.pipe.scheduler = scheduler
-        
+            if is_xformers_available():
+                    try:
+                        self.pipe.enable_xformers_memory_efficient_attention()
+                    except Exception as e:
+                        print(
+                            "Could not enable memory efficient attention. Make sure xformers is installed"
+                            f" correctly and a GPU is available: {e}"
+                        )
         def displayInterImg(step: int, timestep: int, latents: torch.FloatTensor):
             #tensor to image
             img = self.pipe.decode_latents(latents)
@@ -2893,22 +2910,26 @@ class App(ctk.CTk):
             return
         #open stabletune_concept_list.json
         if os.path.exists('stabletune_last_run.json'):
-            with open('stabletune_last_run.json') as f:
-                self.last_run = json.load(f)
-            if self.regenerate_latent_cache == False:
-                if self.last_run["concepts"] == self.concepts:
-                    #check if resolution is the same
-                    try:
-                        #try because I keep adding stuff to the json file and it may error out for peeps
-                        if self.last_run["resolution"] != self.resolution or self.use_text_files_as_captions != self.last_run['use_text_files_as_captions'] or self.last_run['dataset_repeats'] != self.dataset_repeats or self.last_run["batch_size"] != self.batch_size or self.last_run["train_text_encoder"] != self.train_text_encoder or self.last_run["use_image_names_as_captions"] != self.use_image_names_as_captions or self.last_run["auto_balance_concept_datasets"] != self.auto_balance_concept_datasets or self.last_run["add_class_images_to_dataset"] != self.add_class_images_to_dataset or self.last_run["number_of_class_images"] != self.number_of_class_images or self.last_run["aspect_ratio_bucketing"] != self.use_aspect_ratio_bucketing:
-                            self.regenerate_latent_cache = True
-                            #show message
-                            
-                            messagebox.showinfo("StableTuner", "Configuration changed, regenerating latent cache")
-                    except:
-                        print("Error trying to see if regenerating latent cache is needed, this means it probably needs to be regenerated and ST was updated recently.")
-                        pass
-                
+            try:
+                with open('stabletune_last_run.json') as f:
+                    self.last_run = json.load(f)
+                if self.regenerate_latent_cache == False:
+                    if self.last_run["concepts"] == self.concepts:
+                        #check if resolution is the same
+                        try:
+                            #try because I keep adding stuff to the json file and it may error out for peeps
+                            if self.last_run["resolution"] != self.resolution or self.use_text_files_as_captions != self.last_run['use_text_files_as_captions'] or self.last_run['dataset_repeats'] != self.dataset_repeats or self.last_run["batch_size"] != self.batch_size or self.last_run["train_text_encoder"] != self.train_text_encoder or self.last_run["use_image_names_as_captions"] != self.use_image_names_as_captions or self.last_run["auto_balance_concept_datasets"] != self.auto_balance_concept_datasets or self.last_run["add_class_images_to_dataset"] != self.add_class_images_to_dataset or self.last_run["number_of_class_images"] != self.number_of_class_images or self.last_run["aspect_ratio_bucketing"] != self.use_aspect_ratio_bucketing:
+                                self.regenerate_latent_cache = True
+                                #show message
+                                
+                                messagebox.showinfo("StableTuner", "Configuration changed, regenerating latent cache")
+                        except:
+                            print("Error trying to see if regenerating latent cache is needed, this means it probably needs to be regenerated and ST was updated recently.")
+                            pass
+            except Exception as e:
+                print(e)
+                print("Error checking last run, regenerating latent cache")
+                self.regenerate_latent_cache = True
 
         #create a bat file to run the training
         if self.mixed_precision == 'fp16' or self.mixed_precision == 'bf16':
@@ -2921,7 +2942,7 @@ class App(ctk.CTk):
             batBase += ' "--use_text_files_as_captions" '
         if self.sample_step_interval != '0' or self.sample_step_interval != '' or self.sample_step_interval != ' ':
             batBase += f' "--sample_step_interval={self.sample_step_interval}" '
-        if '%' in self.limit_text_encoder or self.limit_text_encoder != '0' and len(self.limit_text_encoder) > 0:
+        if '%' in self.limit_text_encoder or self.limit_text_encoder != '0' or self.limit_text_encoder != '100%' and len(self.limit_text_encoder) > 0:
             #calculate the epoch number from the percentage and set the limit_text_encoder to the epoch number
             self.limit_text_encoder = int(self.limit_text_encoder.replace('%','')) * int(self.train_epocs) / 100
             #round the number to the nearest whole number
