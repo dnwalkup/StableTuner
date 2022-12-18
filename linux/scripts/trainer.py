@@ -185,13 +185,13 @@ def parse_args():
         "--sample_height",
         type=int,
         default=512,
-        help="The number of samples to save.",
+        help="The height of your sample.",
     )
     parser.add_argument(
         "--sample_width",
         type=int,
         default=512,
-        help="The number of samples to save.",
+        help="The width of your sample.",
     )
     parser.add_argument(
         "--save_guidance_scale",
